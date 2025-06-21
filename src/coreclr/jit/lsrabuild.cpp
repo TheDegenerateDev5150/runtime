@@ -782,7 +782,27 @@ regMaskTP LinearScan::getKillSetForMul(GenTreeOp* mulNode)
     regMaskTP killMask = RBM_NONE;
 #ifdef TARGET_XARCH
     assert(mulNode->OperIsMul());
-    if (!mulNode->OperIs(GT_MUL) || (((mulNode->gtFlags & GTF_UNSIGNED) != 0) && mulNode->gtOverflowEx()))
+    if (!mulNode->OperIs(GT_MUL))
+    {
+        // If we can use the mulx instruction, we don't need to kill RAX
+        if (mulNode->IsUnsigned() && compiler->compOpportunisticallyDependsOn(InstructionSet_AVX2))
+        {
+            // If on operand is contained, we define fixed RDX register for use, so we don't need to kill register.
+            if (mulNode->gtGetOp1()->isContained() || mulNode->gtGetOp2()->isContained())
+            {
+                killMask = RBM_NONE;
+            }
+            else
+            {
+                killMask = RBM_RDX;
+            }
+        }
+        else
+        {
+            killMask = RBM_RAX | RBM_RDX;
+        }
+    }
+    else if (mulNode->IsUnsigned() && mulNode->gtOverflowEx())
     {
         killMask = RBM_RAX | RBM_RDX;
     }
@@ -1826,13 +1846,6 @@ void LinearScan::buildRefPositionsForNode(GenTree* tree, LsraLocation currentLoc
             }
         }
 
-        if (tree->OperIsPutArgSplit())
-        {
-            // While we have attempted to account for any "specialPutArg" defs above, we're only looking at RefPositions
-            // created for this node. We must be defining at least one register in the PutArgSplit, so conservatively
-            // add one less than the maximum number of registers args to 'minRegCount'.
-            minRegCount += MAX_REG_ARG - 1;
-        }
         for (refPositionMark++; refPositionMark != refPositions.end(); refPositionMark++)
         {
             RefPosition* newRefPosition    = &(*refPositionMark);
@@ -3069,6 +3082,7 @@ RefPosition* LinearScan::BuildDef(GenTree* tree, SingleTypeRegSet dstCandidates,
 #ifndef TARGET_ARM
     setTgtPref(interval, tgtPrefUse);
     setTgtPref(interval, tgtPrefUse2);
+    setTgtPref(interval, tgtPrefUse3);
 #endif // !TARGET_ARM
 
 #if FEATURE_PARTIAL_SIMD_CALLEE_SAVE
@@ -3109,19 +3123,6 @@ int LinearScan::BuildCallArgUses(GenTreeCall* call)
                 BuildUse(use.GetNode(), genSingleTypeRegMask(use.GetNode()->GetRegNum()));
             }
 
-            continue;
-        }
-#endif
-
-#if FEATURE_ARG_SPLIT
-        if (argNode->OperIs(GT_PUTARG_SPLIT))
-        {
-            unsigned regCount = argNode->AsPutArgSplit()->gtNumRegs;
-            for (unsigned int i = 0; i < regCount; i++)
-            {
-                BuildUse(argNode, genSingleTypeRegMask(argNode->AsPutArgSplit()->GetRegNumByIdx(i)), i);
-            }
-            srcCount += regCount;
             continue;
         }
 #endif
@@ -4151,7 +4152,7 @@ int LinearScan::BuildStoreLoc(GenTreeLclVarCommon* storeLoc)
             BuildUse(op1, RBM_NONE, i);
         }
 #if defined(FEATURE_SIMD) && defined(TARGET_X86)
-        if (TargetOS::IsWindows && !compiler->compOpportunisticallyDependsOn(InstructionSet_SSE41))
+        if (TargetOS::IsWindows && !compiler->compOpportunisticallyDependsOn(InstructionSet_SSE42))
         {
             if (varTypeIsSIMD(storeLoc) && op1->IsCall())
             {

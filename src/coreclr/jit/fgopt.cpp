@@ -1298,6 +1298,17 @@ bool Compiler::fgOptimizeBranchToEmptyUnconditional(BasicBlock* block, BasicBloc
     assert(bDest->isEmpty());
     assert(bDest->KindIs(BBJ_ALWAYS));
 
+    BasicBlock* const bDestTarget = bDest->GetTarget();
+
+    // Don't redirect 'block' to 'bDestTarget' if the latter jumps to 'bDest'.
+    // This will lead the JIT to consider optimizing 'block' -> 'bDestTarget' -> 'bDest',
+    // entering an infinite loop.
+    //
+    if (bDestTarget->GetUniqueSucc() == bDest)
+    {
+        optimizeJump = false;
+    }
+
     // We do not optimize jumps between two different try regions.
     // However jumping to a block that is not in any try region is OK
     //
@@ -1307,7 +1318,7 @@ bool Compiler::fgOptimizeBranchToEmptyUnconditional(BasicBlock* block, BasicBloc
     }
 
     // Don't optimize a jump to a removed block
-    if (bDest->GetTarget()->HasFlag(BBF_REMOVED))
+    if (bDestTarget->HasFlag(BBF_REMOVED))
     {
         optimizeJump = false;
     }
@@ -2247,6 +2258,7 @@ bool Compiler::fgOptimizeUncondBranchToSimpleCond(BasicBlock* block, BasicBlock*
     //
     fgRedirectTargetEdge(block, target->GetTrueTarget());
     block->GetTargetEdge()->setLikelihood(target->GetTrueEdge()->getLikelihood());
+    block->GetTargetEdge()->setHeuristicBased(target->GetTrueEdge()->isHeuristicBased());
 
     FlowEdge* const falseEdge = fgAddRefPred(target->GetFalseTarget(), block, target->GetFalseEdge());
     block->SetCond(block->GetTargetEdge(), falseEdge);
@@ -2661,9 +2673,10 @@ bool Compiler::fgOptimizeBranch(BasicBlock* bJump)
     }
 #endif // DEBUG
 
+    // Computing the duplication cost may have triggered node reordering, so return true to indicate we modified IR
     if (costIsTooHigh)
     {
-        return false;
+        return true;
     }
 
     /* Looks good - duplicate the conditional block */
@@ -2677,12 +2690,7 @@ bool Compiler::fgOptimizeBranch(BasicBlock* bJump)
     {
         // Clone/substitute the expression.
         Statement* stmt = gtCloneStmt(curStmt);
-
-        // cloneExpr doesn't handle everything.
-        if (stmt == nullptr)
-        {
-            return false;
-        }
+        assert(stmt != nullptr);
 
         if (fgNodeThreading == NodeThreading::AllTrees)
         {
@@ -2713,9 +2721,10 @@ bool Compiler::fgOptimizeBranch(BasicBlock* bJump)
     condTree = condTree->gtGetOp1();
 
     // This condTree has to be a RelOp comparison.
-    if (condTree->OperIsCompare() == false)
+    // If not, return true since we created new nodes.
+    if (!condTree->OperIsCompare())
     {
-        return false;
+        return true;
     }
 
     // Join the two linked lists.
@@ -2744,6 +2753,7 @@ bool Compiler::fgOptimizeBranch(BasicBlock* bJump)
 
     fgRedirectTargetEdge(bJump, falseTarget);
     bJump->GetTargetEdge()->setLikelihood(falseEdge->getLikelihood());
+    bJump->GetTargetEdge()->setHeuristicBased(falseEdge->isHeuristicBased());
 
     FlowEdge* const newTrueEdge = fgAddRefPred(trueTarget, bJump, trueEdge);
 

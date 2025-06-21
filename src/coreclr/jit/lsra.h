@@ -1935,6 +1935,7 @@ private:
     // 'tgtPrefUse' to that RefPosition.
     RefPosition* tgtPrefUse  = nullptr;
     RefPosition* tgtPrefUse2 = nullptr;
+    RefPosition* tgtPrefUse3 = nullptr;
 
 public:
     // The following keep track of information about internal (temporary register) intervals
@@ -1957,6 +1958,7 @@ private:
     {
         tgtPrefUse               = nullptr;
         tgtPrefUse2              = nullptr;
+        tgtPrefUse3              = nullptr;
         internalCount            = 0;
         setInternalRegsDelayFree = false;
         pendingDelayFree         = false;
@@ -2084,9 +2086,6 @@ private:
 #endif // DEBUG
 
     int BuildPutArgStk(GenTreePutArgStk* argNode);
-#if FEATURE_ARG_SPLIT
-    int BuildPutArgSplit(GenTreePutArgSplit* tree);
-#endif // FEATURE_ARG_SPLIT
     int BuildLclHeap(GenTree* tree);
 
 #if defined(TARGET_AMD64)
